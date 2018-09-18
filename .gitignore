@@ -1,41 +1,18 @@
-# Compiled Lua sources
-luac.out
+# macOS cache files
+.DS_Store
 
-# luarocks build files
-*.src.rock
-*.zip
-*.tar.gz
+# Windows thumbnail cache files
+Thumbs.db
 
-# Object files
-*.o
-*.os
-*.ko
-*.obj
-*.elf
+# Ignore directory with old versions
+/00_old/
 
-# Precompiled Headers
-*.gch
-*.pch
+# Ignore document directory
+/01_doc/
 
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-*.def
-*.exp
+# Ignore withdrawn documents
+/02_withdrawn/
 
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
-
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
-
+# Komodo files
+*.komodoproject
+/.komodotools/
