@@ -14,26 +14,27 @@
 --  p_frag.lua      by mj99, https://osqa-ask.Wireshark.org/answer_link/55764/
 --
 -- History:
---  0.1   04.04.2018      inital version
---  0.2   05-11.04.2018   desegmentation of packets
---  0.2.1 11.04.2018      bug fixing
---  0.2.2 12-14.04.2018   optimisations of reasembling
---  0.3   14.04.2018      dissection of message type 0x06
---  0.3.1 15.04.2018      optimisations of dissecting
---  0.3.2 16-17.04.2018   bug fixing
---  0.4   18-24.04.2018   update desegmentation
---  0.4.1 25.04.2018      bug fixing
---  0.4.2 25-26.04.2018   optimisations of dissecting
---  0.5   26.04.2018      dissection of function code 0x11 and 0x13
---  0.5.1 27.04.2018      display src, dest and info
---  0.5.2 27.04.2018      bug fixing 0x00 and 0x05, add checksum
---  0.5.3 29.04.2018      bug fixing 0x05 and 0x06
---  0.5.4 29.04.2018      bug fixing 0x04
---  0.5.5 30.04.2018      bitcount for data in function code 0x11
---  0.5.6 01-02.05.2018   bug fixing
---  0.5.7 06.06.2018      bug fixing transaction_id and update INFO colum
---  0.5.8 14.06.2018      bug fixing NumberOfSetBits in 0x551111
---  0.5.9 07.08.2018      bug fixing maximum size, update identifier
+--  0.1   	04.04.2018      inital version
+--  0.2   	05-11.04.2018   desegmentation of packets
+--  0.2.1 	11.04.2018      bug fixing
+--  0.2.2 	12-14.04.2018   optimisations of reasembling
+--  0.3   	14.04.2018      dissection of message type 0x06
+--  0.3.1 	15.04.2018      optimisations of dissecting
+--  0.3.2 	16-17.04.2018   bug fixing
+--  0.4   	18-24.04.2018   update desegmentation
+--  0.4.1 	25.04.2018      bug fixing
+--  0.4.2 	25-26.04.2018   optimisations of dissecting
+--  0.5   	26.04.2018      dissection of function code 0x11 and 0x13
+--  0.5.1 	27.04.2018      display src, dest and info
+--  0.5.2 	27.04.2018      bug fixing 0x00 and 0x05, add checksum
+--  0.5.3 	29.04.2018      bug fixing 0x05 and 0x06
+--  0.5.4 	29.04.2018      bug fixing 0x04
+--  0.5.5 	30.04.2018      bitcount for data in function code 0x11
+--  0.5.6 	01-02.05.2018   bug fixing
+--  0.5.7 	06.06.2018      bug fixing transaction_id and update INFO colum
+--  0.5.8 	14.06.2018      bug fixing NumberOfSetBits in 0x551111
+--  0.5.9 	07.08.2018      bug fixing maximum size, update identifier
+--  0.5.10 	27.09.2018      bug fixing 0x06, 0x551111 and 0x551313
 --
 -------------------------------------------------------------------------------
 
@@ -557,19 +558,23 @@ local lookup_function_code = {
   [0x1111] = {
     -- Fetch Data Response
     pdu_length = function(tvb)
-      if tvb:len() < 5 then return -1 end
-      -- Confirmation Code + Control Code + Function Code + Byte Count (16bit Little Endian) + Data + End Delimiter
-      return 1 + 1 + 2 + 2 + tvb(4,2):le_uint() + 1
+	  -- Header: [Confirmation Code +] Control Code + Function Code + Byte Count (16bit Little Endian) + ...
+      local offset = tvb(0,1):uint() == 0x06 and 1 or 0
+      local pdu_header_len = offset + 1 + 2 + 2
+      if tvb:len() < pdu_header_len then return -1 end
+      -- ... + Data + End Delimiter
+      return pdu_header_len + tvb(offset+3,2):le_uint() + 1
     end,
     dissect = function(tvb, pinfo, tree)
-      -- Header: Confirmation Code + Control Code + Function Code + Byte Count (16bit Little Endian) + ...
-      local pdu_header_len = 1 + 1 + 2 + 2
+      -- Header: [Confirmation Code +] Control Code + Function Code + Byte Count (16bit Little Endian) + ...
+      local offset = tvb(0,1):uint() == 0x06 and 1 or 0
+      local pdu_header_len = offset + 1 + 2 + 2
       if tvb:len() < pdu_header_len then return 0 end
-      tree:add(pg_fields.response_code, tvb(1,1))
-      tree:add(pg_fields.function_code, tvb(2,2))
+      tree:add(pg_fields.response_code, tvb(offset,1))
+      tree:add(pg_fields.function_code, tvb(offset+1,2))
       -- Number of Bytes (16bit value)
-      local number_of_bytes = tvb(4,2):le_uint()
-      tree:add_le(pg_fields.byte_count, tvb(4,2))
+      local number_of_bytes = tvb(offset+3,2):le_uint()
+      tree:add_le(pg_fields.byte_count, tvb(offset+3,2))
 
       -- ... Data + ...
       local pdu_length = pdu_header_len + number_of_bytes + 1
@@ -579,7 +584,7 @@ local lookup_function_code = {
         tree:add(pg_fields.data, tvb(pdu_header_len, pdu_length - pdu_header_len - 1))
       else
         -- display data as tree info in wireshark
-        local offset = pdu_header_len
+        offset = pdu_header_len
         local datatree = tree:add(tvb(pdu_header_len, pdu_length - pdu_header_len - 1), "Data bytes")
         datatree:add(tvb(offset,2), string.format("Program checksum: 0x%04x", tvb(offset,2):uint()))
         offset = offset + 2
@@ -822,16 +827,22 @@ local lookup_function_code = {
       local pdu_length = pdu_header_len + number_of_bytes + 1
       if tvb:len() < pdu_length then return 0 end
 
-      if not default_settings.subdissect then
-        tree:add(pg_fields.data, tvb(pdu_header_len, pdu_length - pdu_header_len - 1))
-      else
-        -- display data as tree info in wireshark
-        local subtree = tree:add(tvb(pdu_header_len, pdu_length - pdu_header_len - 1), "Data bytes")
-        for offset = pdu_header_len, pdu_length - 2, 1 do
-          local block_number = tvb(offset, 1):uint() - 9
-          subtree:add(tvb(offset, 1), string.format("Block: B%03u", block_number))
-        end
-      end
+	  if number_of_bytes > 0 then
+		if not default_settings.subdissect then
+		  tree:add(pg_fields.data, tvb(pdu_header_len
+									   , pdu_length - pdu_header_len - 1))
+		else
+		  -- display data as tree info in wireshark
+		  local subtree = tree:add(tvb(pdu_header_len
+									   , pdu_length - pdu_header_len - 1)
+								   , "Data bytes")
+		  for offset = pdu_header_len, pdu_length - 2, 1 do
+			local block_number = tvb(offset, 1):uint() - 9
+			subtree:add(tvb(offset, 1), string.format("Block: B%03u"
+													  , block_number))
+		  end
+		end
+	  end
       -- ... + End Delimiter
       tree:add(pg_fields.trailer, tvb(pdu_length - 1, 1))
       return pdu_length
@@ -895,23 +906,20 @@ local lookup_function_code = {
   },
 }
 
-local lookup_message_type = {}
 local lookup_ack_response = {
   [0x01] = {
     -- Mode RUN
     pdu_length = function(tvb)
-      if tvb:len() < 2 then return -1 end
-      if tvb:len() > 2 then
-		local next_code = tvb(2,1):uint()
-		if lookup_message_type[next_code] == nil then return 1 end
+      if tvb:len() == 1 + 1 + address_len + 1 then
+        -- Confirmation Code + Write Byte Command + Address + Data Byte
+		return 1
 	  end
       return 2
     end,
     dissect = function(tvb, pinfo, tree)
-      if tvb:len() < 2 then return 0 end
-      if tvb:len() > 2 then
-		local next_code = tvb(2,1):uint()
-		if lookup_message_type[next_code] == nil then return 1 end
+      if tvb:len() == 1 + 1 + address_len + 1 then
+        -- Confirmation Code + Write Byte Command + Address + Data Byte
+		return 1
 	  end
 	  tree:add(pg_fields.response_code, tvb(1,1))
       return 2
@@ -940,7 +948,8 @@ local lookup_ack_response = {
       -- check if it is a Connection Response of a 0ba6
       if tvb(2,1):uint() == 0x21 then
         tree:add(tvb(2,1), "Connection Response (0x21)")
-        tree:add(tvb(3,1), string.format("Unit identifierer: 0BA6 (0x%02x)", tvb(3,1):uint()))
+        tree:add(tvb(3,1), string.format("Unit identifierer: 0BA6 (0x%02x)"
+										 , tvb(3,1):uint()))
         return 4
       else
         -- Confirmation Code + Data Response + Address (16/32bit) + ...
@@ -974,27 +983,6 @@ local lookup_ack_response = {
       if tvb:len() < 2 then return 0 end
       tree:add(pg_fields.response_code, tvb(1,1))
       return 2
-    end
-  },
-  [0x55] = {
-    -- Control Command Response
-    pdu_length = function(tvb)
-      if tvb:len() < 4 then return -1 end
-      -- Confirmation Code + Control Code + Function Code + ...
-      local function_code = tvb(2,2):uint()
-      -- Acknowledgement
-      if function_code ~= 0x1111 then return 1 end
-      if lookup_function_code[function_code] == nil then return 0 end
-      return lookup_function_code[function_code].pdu_length(tvb)
-    end,
-    dissect = function(tvb, pinfo, tree)
-      if tvb:len() < 4 then return 0 end
-      -- Confirmation Code + Control Code + Function Code + ...
-      local function_code = tvb(2,2):uint()
-      -- Acknowledgement
-      if function_code ~= 0x1111 then return 1 end
-      if lookup_function_code[function_code] == nil then return 0 end
-      return lookup_function_code[function_code].dissect(tvb, pinfo, tree)
     end
   },
 }
@@ -1167,15 +1155,15 @@ lookup_message_type = {
     -- Acknowledge Response
     pdu_length = function(tvb)
       -- Confirmation Code + Response Code + ...
-      if tvb:len() < 2 then return -1 end
+      if tvb:len() < 2 then return 1 end
       local response_code = tvb(1,1):uint()
       if lookup_ack_response[response_code] == nil then return 1 end
       return lookup_ack_response[response_code].pdu_length(tvb)
     end,
     dissect = function(tvb, pinfo, tree)
       -- Confirmation Code + Response Code + ...
-      if tvb:len() < 2 then return 0 end
       tree:add(pg_fields.message_type, tvb(0,1))
+      if tvb:len() < 2 then return 1 end
       local response_code = tvb(1,1):uint()
       if lookup_ack_response[response_code] == nil then return 1 end
       return lookup_ack_response[response_code].dissect(tvb, pinfo, tree)
@@ -1237,8 +1225,6 @@ lookup_message_type = {
       if tvb:len() < 3 then return -1 end
       -- Control Code + Function Code + ...
       local function_code = tvb(1,2):uint()
-      -- Return 0 (error) if it is a Confirmation Response
-      if function_code == 0x1111 then return 0 end
       if lookup_function_code[function_code] == nil then return 0 end
       return lookup_function_code[function_code].pdu_length(tvb)
     end, 
@@ -1247,8 +1233,6 @@ lookup_message_type = {
       if tvb:len() < 3 then return 0 end
       tree:add(pg_fields.message_type, tvb(0,1))
       local function_code = tvb(1,2):uint()
-      -- Return 0 (error) if it is a Confirmation Response
-      if function_code == 0x1111 then return 0 end
       if lookup_function_code[function_code] == nil then return 0 end
       return lookup_function_code[function_code].dissect(tvb, pinfo, tree)
     end
@@ -1480,7 +1464,8 @@ function LOGOPG.dissector(tvb, pinfo, tree)
     if message_type == 0x55 and pdu_length >= 3 and length >= 3 then
       local function_code = tvb(1,2):uint()
       if FUNCTION_CODES[function_code] then
-        pinfo.cols.info:append(string.format(", %s]", FUNCTION_CODES[function_code]))
+        pinfo.cols.info:append(string.format(", %s]"
+											 , FUNCTION_CODES[function_code]))
       else
         pinfo.cols.info:append(string.format(", FC=0x%04x]", function_code))
       end
