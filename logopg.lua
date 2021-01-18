@@ -4,7 +4,7 @@
 -------------------------------------------------------------------------------
 --
 -- author: J.Schneider <https://github.com/brickpool/logo>
--- Copyright (c) 2018, J.Schneider
+-- Copyright (c) 2018,2020,2021 J.Schneider
 -- The dissector is licensed under the GNU Lesser General Public License v3.0.
 --
 -- However, this dissector distributes and uses code from
@@ -14,27 +14,29 @@
 --  p_frag.lua      by mj99, https://osqa-ask.Wireshark.org/answer_link/55764/
 --
 -- History:
---  0.1   	04.04.2018      inital version
---  0.2   	05-11.04.2018   desegmentation of packets
---  0.2.1 	11.04.2018      bug fixing
---  0.2.2 	12-14.04.2018   optimisations of reasembling
---  0.3   	14.04.2018      dissection of message type 0x06
---  0.3.1 	15.04.2018      optimisations of dissecting
---  0.3.2 	16-17.04.2018   bug fixing
---  0.4   	18-24.04.2018   update desegmentation
---  0.4.1 	25.04.2018      bug fixing
---  0.4.2 	25-26.04.2018   optimisations of dissecting
---  0.5   	26.04.2018      dissection of function code 0x11 and 0x13
---  0.5.1 	27.04.2018      display src, dest and info
---  0.5.2 	27.04.2018      bug fixing 0x00 and 0x05, add checksum
---  0.5.3 	29.04.2018      bug fixing 0x05 and 0x06
---  0.5.4 	29.04.2018      bug fixing 0x04
---  0.5.5 	30.04.2018      bitcount for data in function code 0x11
---  0.5.6 	01-02.05.2018   bug fixing
---  0.5.7 	06.06.2018      bug fixing transaction_id and update INFO colum
---  0.5.8 	14.06.2018      bug fixing NumberOfSetBits in 0x551111
---  0.5.9 	07.08.2018      bug fixing maximum size, update identifier
---  0.5.10 	27.09.2018      bug fixing 0x06, 0x551111 and 0x551313
+--  0.1     04.04.2018      inital version
+--  0.2     05-11.04.2018   desegmentation of packets
+--  0.2.1   11.04.2018      bug fixing
+--  0.2.2   12-14.04.2018   optimisations of reasembling
+--  0.3     14.04.2018      dissection of message type 0x06
+--  0.3.1   15.04.2018      optimisations of dissecting
+--  0.3.2   16-17.04.2018   bug fixing
+--  0.4     18-24.04.2018   update desegmentation
+--  0.4.1   25.04.2018      bug fixing
+--  0.4.2   25-26.04.2018   optimisations of dissecting
+--  0.5     26.04.2018      dissection of function code 0x11 and 0x13
+--  0.5.1   27.04.2018      display src, dest and info
+--  0.5.2   27.04.2018      bug fixing 0x00 and 0x05, add checksum
+--  0.5.3   29.04.2018      bug fixing 0x05 and 0x06
+--  0.5.4   29.04.2018      bug fixing 0x04
+--  0.5.5   30.04.2018      bitcount for data in function code 0x11
+--  0.5.6   01-02.05.2018   bug fixing
+--  0.5.7   06.06.2018      bug fixing transaction_id and update INFO colum
+--  0.5.8   14.06.2018      bug fixing NumberOfSetBits in 0x551111
+--  0.5.9   07.08.2018      bug fixing maximum size, update identifier
+--  0.5.10  27.09.2018      bug fixing 0x06, 0x551111 and 0x551313
+--  0.5.11  12.12.2020      add identifier 0ba1
+--  0.5.12  18.01.2020      correct some typos in source code
 --
 -------------------------------------------------------------------------------
 
@@ -127,6 +129,7 @@ local address_len = default_settings.address_len
 
 -- ADU fields
 local IDENTIFIERS = {
+  [0x04] = "0BA1",
   [0x40] = "0BA4",
   [0x42] = "0BA5",
   [0x43] = "0BA6",
@@ -266,28 +269,28 @@ end
 
 
 --------------------------------------------------------------------------------
--- This function Cout the number of bits,
+-- This function count the number of bits,
 -- Parameter "data" is a ByteAarry, "bits" is the number of bits (optional)
 --------------------------------------------------------------------------------
 function NumberOfSetBits(data, bits)
   local count = 0
   if bits ~= nil and bits > 0 and bits < data:len()*8 then
-	-- local q,r = bits /% 8
-	local r = math.fmod(bits, 8)
-	local q = (bits - r) / 8
-	if r > 0 then
-	  data:set_size(q + 1)
-	  data:set_index(q, bit32.band(data:get_index(q), r))
-	else
- 	  data:set_size(q)
-	end
-  end
-  for i = 0, data:len()-1 do
-	local n = data:get_index(i)
-	while n > 0 do
-	  count = count + bit.band(n, 0x01)
-	  n = bit.rshift(n, 1)
-	end
+    -- local q,r = bits /% 8
+    local r = math.fmod(bits, 8)
+    local q = (bits - r) / 8
+    if r > 0 then
+      data:set_size(q + 1)
+      data:set_index(q, bit32.band(data:get_index(q), r))
+    else
+      data:set_size(q)
+    end
+    end
+    for i = 0, data:len()-1 do
+    local n = data:get_index(i)
+    while n > 0 do
+      count = count + bit.band(n, 0x01)
+      n = bit.rshift(n, 1)
+    end
   end
   return count
 end
@@ -558,7 +561,8 @@ local lookup_function_code = {
   [0x1111] = {
     -- Fetch Data Response
     pdu_length = function(tvb)
-	  -- Header: [Confirmation Code +] Control Code + Function Code + Byte Count (16bit Little Endian) + ...
+      -- Header: [Confirmation Code +] Control Code + Function Code
+      --  + Byte Count (16bit Little Endian) + ...
       local offset = tvb(0,1):uint() == 0x06 and 1 or 0
       local pdu_header_len = offset + 1 + 2 + 2
       if tvb:len() < pdu_header_len then return -1 end
@@ -566,7 +570,8 @@ local lookup_function_code = {
       return pdu_header_len + tvb(offset+3,2):le_uint() + 1
     end,
     dissect = function(tvb, pinfo, tree)
-      -- Header: [Confirmation Code +] Control Code + Function Code + Byte Count (16bit Little Endian) + ...
+      -- Header: [Confirmation Code +] Control Code + Function Code
+      --  + Byte Count (16bit Little Endian) + ...
       local offset = tvb(0,1):uint() == 0x06 and 1 or 0
       local pdu_header_len = offset + 1 + 2 + 2
       if tvb:len() < pdu_header_len then return 0 end
@@ -581,20 +586,27 @@ local lookup_function_code = {
       if tvb:len() < pdu_length then return 0 end
 
       if not default_settings.subdissect then
-        tree:add(pg_fields.data, tvb(pdu_header_len, pdu_length - pdu_header_len - 1))
+        tree:add(pg_fields.data, tvb(pdu_header_len,
+                                     pdu_length - pdu_header_len - 1))
       else
         -- display data as tree info in wireshark
         offset = pdu_header_len
-        local datatree = tree:add(tvb(pdu_header_len, pdu_length - pdu_header_len - 1), "Data bytes")
-        datatree:add(tvb(offset,2), string.format("Program checksum: 0x%04x", tvb(offset,2):uint()))
+        local datatree = tree:add(tvb(pdu_header_len,
+                                      pdu_length - pdu_header_len - 1),
+                                  "Data bytes")
+        datatree:add(tvb(offset,2), string.format("Program checksum: 0x%04x",
+                                                  tvb(offset,2):uint()))
         offset = offset + 2
         local block_length = tvb(offset,1):uint()
-        datatree:add(tvb(offset,1), string.format("Block Length: %d", block_length))
+        datatree:add(tvb(offset,1), string.format("Block Length: %d",
+                                                  block_length))
         offset = offset + 1
-        datatree:add(tvb(offset,1), string.format("Constant Length: %d", tvb(offset,1):uint()))
+        datatree:add(tvb(offset,1), string.format("Constant Length: %d",
+                                                  tvb(offset,1):uint()))
         offset = offset + 1
         local additional_bytes = tvb(offset,1):uint()
-        datatree:add(tvb(offset, 1), string.format("Additional Length: %d", additional_bytes))
+        datatree:add(tvb(offset, 1), string.format("Additional Length: %d",
+                                                   additional_bytes))
         offset = offset + 1
   
         -- check if it is a Response of a 0ba6 or 0ba4/0ba5
@@ -606,11 +618,16 @@ local lookup_function_code = {
         -- block outputs
         local number_of_bits = address_len == 4 and 200 or 130
         local bytes_to_consume = address_len == 4 and 25 or 17
-        local bitcount = NumberOfSetBits(tvb(offset, bytes_to_consume):bytes(), number_of_bits)
-        local subtree = datatree:add(tvb(offset, bytes_to_consume), string.format("Block outputs [Bitcount %d]", bitcount))
+        local bitcount = NumberOfSetBits(tvb(offset, bytes_to_consume):bytes(),
+                                         number_of_bits)
+        local subtree = datatree:add(tvb(offset, bytes_to_consume),
+                                    string.format("Block outputs [Bitcount %d]",
+                                                  bitcount))
         local bit = 1
         while bytes_to_consume > 0 do
-          subtree:add(tvb(offset,1), string.format("B%03u-B%03u", bit+7 > number_of_bits and number_of_bits or bit+7, bit))
+          subtree:add(tvb(offset,1),
+                      string.format("B%03u-B%03u", bit+7 > number_of_bits
+                                    and number_of_bits or bit+7, bit))
           subtree:add(pg_fields.bit0, tvb(offset,1))
           subtree:add(pg_fields.bit1, tvb(offset,1))
           bit = bit + 2
@@ -630,8 +647,11 @@ local lookup_function_code = {
         -- digital inputs
         number_of_bits = 24
         bytes_to_consume = 3
-        bitcount = NumberOfSetBits(tvb(offset, bytes_to_consume):bytes(), number_of_bits)
-        subtree = datatree:add(tvb(offset, bytes_to_consume), string.format("Digital inputs [Bitcount %d]", bitcount))
+        bitcount = NumberOfSetBits(tvb(offset, bytes_to_consume):bytes(),
+                                   number_of_bits)
+        subtree = datatree:add(tvb(offset, bytes_to_consume),
+                               string.format("Digital inputs [Bitcount %d]",
+                                             bitcount))
         bit = 1
         while bytes_to_consume > 0 do
           subtree:add(tvb(offset,1), string.format("I%02u-I%02u", bit+7, bit))
@@ -651,7 +671,9 @@ local lookup_function_code = {
         -- function keys
         if address_len == 4 then
           bitcount = NumberOfSetBits(tvb(offset,1):bytes(), 4)
-          subtree = datatree:add(tvb(offset,1), string.format("Function keys [Bitcount %d]", bitcount))
+          subtree = datatree:add(tvb(offset,1),
+                                 string.format("Function keys [Bitcount %d]",
+                                               bitcount))
           subtree:add(tvb(offset,1), "F04-F01")
           subtree:add(pg_fields.bit0, tvb(offset,1))
           subtree:add(pg_fields.bit1, tvb(offset,1))
@@ -663,8 +685,11 @@ local lookup_function_code = {
         -- digital outputs
         number_of_bits = 16
         bytes_to_consume = 2
-        bitcount = NumberOfSetBits(tvb(offset, bytes_to_consume):bytes(), number_of_bits)
-        subtree = datatree:add(tvb(offset, bytes_to_consume), string.format("Digital outputs [Bitcount %d]", bitcount))
+        bitcount = NumberOfSetBits(tvb(offset, bytes_to_consume):bytes(),
+                                   number_of_bits)
+        subtree = datatree:add(tvb(offset, bytes_to_consume),
+                               string.format("Digital outputs [Bitcount %d]",
+                                             bitcount))
         bit = 1
         while bytes_to_consume > 0 do
           subtree:add(tvb(offset,1), string.format("Q%02u-Q%02u", bit+7, bit))
@@ -684,11 +709,16 @@ local lookup_function_code = {
         -- digital merkers
         number_of_bits = address_len == 4 and 27 or 24
         bytes_to_consume = address_len == 4 and 4 or 3
-        bitcount = NumberOfSetBits(tvb(offset, bytes_to_consume):bytes(), number_of_bits)
-        subtree = datatree:add(tvb(offset, bytes_to_consume), string.format("Digital merkers [Bitcount %d]", bitcount))
+        bitcount = NumberOfSetBits(tvb(offset, bytes_to_consume):bytes(),
+                                   number_of_bits)
+        subtree = datatree:add(tvb(offset, bytes_to_consume),
+                               string.format("Digital merkers [Bitcount %d]",
+                                             bitcount))
         bit = 1
         while bytes_to_consume > 0 do
-          subtree:add(tvb(offset,1), string.format("M%02u-M%02u", bit+7 > number_of_bits and number_of_bits or bit+7, bit))
+          subtree:add(tvb(offset,1),
+                      string.format("M%02u-M%02u", bit+7 > number_of_bits
+                                    and number_of_bits or bit+7, bit))
           subtree:add(pg_fields.bit0, tvb(offset,1))
           subtree:add(pg_fields.bit1, tvb(offset,1))
           subtree:add(pg_fields.bit2, tvb(offset,1))
@@ -707,7 +737,9 @@ local lookup_function_code = {
         
         -- shift register
         bitcount = NumberOfSetBits(tvb(offset,1):bytes(), 8)
-        subtree = datatree:add(tvb(offset,1), string.format("Shift register [Bitcount %d]", bitcount))
+        subtree = datatree:add(tvb(offset,1),
+                               string.format("Shift register [Bitcount %d]",
+                                             bitcount))
         subtree:add(tvb(offset,1), "S08-S01")
         subtree:add(pg_fields.bit0, tvb(offset,1))
         subtree:add(pg_fields.bit1, tvb(offset,1))
@@ -721,7 +753,9 @@ local lookup_function_code = {
         
         -- cursor keys
         bitcount = NumberOfSetBits(tvb(offset,1):bytes(), 4)
-        subtree = datatree:add(tvb(offset,1), string.format("Cursor keys [Bitcount %d]", bitcount))
+        subtree = datatree:add(tvb(offset,1),
+                               string.format("Cursor keys [Bitcount %d]",
+                                             bitcount))
         subtree:add(tvb(offset,1), "C04-C01")
         subtree:add(pg_fields.bit0, tvb(offset,1))
         subtree:add(pg_fields.bit1, tvb(offset,1))
@@ -738,10 +772,13 @@ local lookup_function_code = {
             break
           end
         end
-        subtree = datatree:add(tvb(offset,bytes_to_consume), string.format("Analog inputs [%s]", FLAG_VALUE[flag]))
+        subtree = datatree:add(tvb(offset,bytes_to_consume),
+                               string.format("Analog inputs [%s]",
+                                             FLAG_VALUE[flag]))
         local analog = 1
         while bytes_to_consume > 0 do
-          subtree:add(tvb(offset,2), string.format("AI%u: %d", analog, tvb(offset,2):le_int()))
+          subtree:add(tvb(offset,2), string.format("AI%u: %d", analog,
+                                                   tvb(offset,2):le_int()))
           analog = analog + 1
           offset = offset + 2
           bytes_to_consume = bytes_to_consume - 2
@@ -755,10 +792,14 @@ local lookup_function_code = {
             break
           end
         end
-        subtree = datatree:add(tvb(offset,4), string.format("Analog outputs [%s]", FLAG_VALUE[flag]))
-        subtree:add(tvb(offset,2), string.format("AQ1: %d", tvb(offset,2):le_int()))
+        subtree = datatree:add(tvb(offset,4),
+                               string.format("Analog outputs [%s]",
+                                             FLAG_VALUE[flag]))
+        subtree:add(tvb(offset,2), string.format("AQ1: %d",
+                                                 tvb(offset,2):le_int()))
         offset = offset + 2
-        subtree:add(tvb(offset,2), string.format("AQ2: %d", tvb(offset,2):le_int()))
+        subtree:add(tvb(offset,2), string.format("AQ2: %d",
+                                                 tvb(offset,2):le_int()))
         offset = offset + 2
   
         -- analog merkers (16bit Little Endian)
@@ -770,10 +811,13 @@ local lookup_function_code = {
             break
           end
         end
-        subtree = datatree:add(tvb(offset,bytes_to_consume), string.format("Analog merkers [%s]", FLAG_VALUE[flag]))
+        subtree = datatree:add(tvb(offset,bytes_to_consume),
+                               string.format("Analog merkers [%s]",
+                                             FLAG_VALUE[flag]))
         local analog = 1
         while bytes_to_consume > 0 do
-          subtree:add(tvb(offset,2), string.format("AM%u: %d", analog, tvb(offset,2):le_int()))
+          subtree:add(tvb(offset,2), string.format("AM%u: %d", analog,
+                                                   tvb(offset,2):le_int()))
           analog = analog + 1
           offset = offset + 2
           bytes_to_consume = bytes_to_consume - 2
@@ -781,7 +825,9 @@ local lookup_function_code = {
   
         -- ... Extra Bytes + 
         flag = additional_bytes > 0 and 1 or 0
-        subtree = datatree:add(tvb(offset, additional_bytes), string.format("Additional bytes [%s]", FLAG_VALUE[flag]))
+        subtree = datatree:add(tvb(offset, additional_bytes),
+                               string.format("Additional bytes [%s]",
+                                             FLAG_VALUE[flag]))
         if additional_bytes > 0 then
           subtree:add(pg_fields.data, tvb(offset, additional_bytes))
         end
@@ -827,22 +873,22 @@ local lookup_function_code = {
       local pdu_length = pdu_header_len + number_of_bytes + 1
       if tvb:len() < pdu_length then return 0 end
 
-	  if number_of_bytes > 0 then
-		if not default_settings.subdissect then
-		  tree:add(pg_fields.data, tvb(pdu_header_len
-									   , pdu_length - pdu_header_len - 1))
-		else
-		  -- display data as tree info in wireshark
-		  local subtree = tree:add(tvb(pdu_header_len
-									   , pdu_length - pdu_header_len - 1)
-								   , "Data bytes")
-		  for offset = pdu_header_len, pdu_length - 2, 1 do
-			local block_number = tvb(offset, 1):uint() - 9
-			subtree:add(tvb(offset, 1), string.format("Block: B%03u"
-													  , block_number))
-		  end
-		end
-	  end
+    if number_of_bytes > 0 then
+      if not default_settings.subdissect then
+        tree:add(pg_fields.data, tvb(pdu_header_len
+                                     , pdu_length - pdu_header_len - 1))
+      else
+        -- display data as tree info in wireshark
+        local subtree = tree:add(tvb(pdu_header_len
+                       , pdu_length - pdu_header_len - 1)
+                     , "Data bytes")
+        for offset = pdu_header_len, pdu_length - 2, 1 do
+        local block_number = tvb(offset, 1):uint() - 9
+        subtree:add(tvb(offset, 1), string.format("Block: B%03u"
+                                                  , block_number))
+        end
+      end
+    end
       -- ... + End Delimiter
       tree:add(pg_fields.trailer, tvb(pdu_length - 1, 1))
       return pdu_length
@@ -912,16 +958,16 @@ local lookup_ack_response = {
     pdu_length = function(tvb)
       if tvb:len() == 1 + 1 + address_len + 1 then
         -- Confirmation Code + Write Byte Command + Address + Data Byte
-		return 1
-	  end
+        return 1
+      end
       return 2
     end,
     dissect = function(tvb, pinfo, tree)
       if tvb:len() == 1 + 1 + address_len + 1 then
         -- Confirmation Code + Write Byte Command + Address + Data Byte
-		return 1
-	  end
-	  tree:add(pg_fields.response_code, tvb(1,1))
+        return 1
+      end
+      tree:add(pg_fields.response_code, tvb(1,1))
       return 2
     end
   },
@@ -934,7 +980,8 @@ local lookup_ack_response = {
       if tvb(2,1):uint() == 0x21 then
         -- at 0ba6 all addresses are 32bit
         address_len = 4
-        -- Confirmation Code + Data Response + Connection Response + Ident Number
+        -- Confirmation Code + Data Response + Connection Response
+        --  + Ident Number
         return 4
       else
         -- Confirmation Code + Data Response + Address + Data Byte
@@ -942,14 +989,15 @@ local lookup_ack_response = {
       end
     end,
     dissect = function(tvb, pinfo, tree)
-      -- Confirmation Code + Data Response + Connection Response (8bit) + Ident Number
+      -- Confirmation Code + Data Response + Connection Response (8bit)
+      --  + Ident Number
       if tvb:len() < 4 then return 0 end
       tree:add(pg_fields.response_code, tvb(1,1))
       -- check if it is a Connection Response of a 0ba6
       if tvb(2,1):uint() == 0x21 then
         tree:add(tvb(2,1), "Connection Response (0x21)")
-        tree:add(tvb(3,1), string.format("Unit identifierer: 0BA6 (0x%02x)"
-										 , tvb(3,1):uint()))
+        tree:add(tvb(3,1), string.format("Unit identifierer: 0BA6 (0x%02x)",
+                                         tvb(3,1):uint()))
         return 4
       else
         -- Confirmation Code + Data Response + Address (16/32bit) + ...
@@ -1041,12 +1089,14 @@ lookup_message_type = {
       if tvb:len() < pdu_header_len then return -1 end
       local offset = 1 + address_len
       if tvb(1,1):uint() == 0x06 then
-        -- Q:[Data Code] + R:[Acknowledge Response] + Q:[Address + Byte Count + Data Block + Checksum]
+        -- Q:[Data Code] + R:[Acknowledge Response] + Q:[Address + Byte Count
+        --  + Data Block + Checksum]
         -- skip Acknowledge Response
         offset = offset + 1
       end
       local number_of_bytes = tvb(offset, 2):uint()
-      -- Data Code + Address (16/32bit) + Byte Count (16bit Big Endian) + Data Block + Checksum + Acknowledge Response
+      -- Data Code + Address (16/32bit) + Byte Count (16bit Big Endian)
+      --  + Data Block + Checksum + Acknowledge Response
       return 1 + address_len + 2 + number_of_bytes + 1 + 1
     end,
     dissect = function(tvb, pinfo, tree)
@@ -1076,9 +1126,11 @@ lookup_message_type = {
       offset = offset + number_of_bytes
       local xor_byte = tvb(offset, 1):uint()
       if xor_byte == checksum then
-        tree:add(pg_fields.checksum, tvb(offset, 1), xor_byte, nil, "[correct]")
+        tree:add(pg_fields.checksum,
+                 tvb(offset, 1), xor_byte, nil, "[correct]")
       else
-        local incorrect = string.format("[incorrect, should be 0x%02x]", checksum)
+        local incorrect = string.format("[incorrect, should be 0x%02x]",
+                                        checksum)
         tree:add(pg_fields.checksum, tvb(offset, 1), xor_byte, nil, incorrect)
       end
       offset = offset + 1
@@ -1100,12 +1152,14 @@ lookup_message_type = {
       if tvb:len() < query_len + 1 then return -1 end
       local offset = 1 + address_len
       if tvb(1,1):uint() == 0x06 then
-        -- Q:[Data Code] + R:[Acknowledge Response] + Q:[Address + Byte Count] + R:[Data Block + Checksum]
+        -- Q:[Data Code] + R:[Acknowledge Response] + Q:[Address + Byte Count]
+        --  + R:[Data Block + Checksum]
         -- skip Acknowledge Response
         offset = offset + 1
       end
       local number_of_bytes = tvb(offset,2):uint()
-      -- Q:[Data Code + Address + Byte Count] + R:[Acknowledge Response + Data Block + Checksum]
+      -- Q:[Data Code + Address + Byte Count] + R:[Acknowledge Response
+      --  + Data Block + Checksum]
       local response_len = 1 + number_of_bytes + 1
       return query_len + response_len
     end,
@@ -1145,7 +1199,8 @@ lookup_message_type = {
       if xor_byte == checksum then
         tree:add(pg_fields.checksum, tvb(offset, 1), xor_byte, nil, "[correct]")
       else
-        local incorrect = string.format("[incorrect, should be 0x%02x]", checksum)
+        local incorrect = string.format("[incorrect, should be 0x%02x]",
+                                        checksum)
         tree:add(pg_fields.checksum, tvb(offset, 1), xor_byte, nil, incorrect)
       end
       return query_len + response_len
@@ -1465,7 +1520,7 @@ function LOGOPG.dissector(tvb, pinfo, tree)
       local function_code = tvb(1,2):uint()
       if FUNCTION_CODES[function_code] then
         pinfo.cols.info:append(string.format(", %s]"
-											 , FUNCTION_CODES[function_code]))
+                       , FUNCTION_CODES[function_code]))
       else
         pinfo.cols.info:append(string.format(", FC=0x%04x]", function_code))
       end
@@ -1670,7 +1725,8 @@ LOGOPPI.prefs.subdissect  = Pref.bool("Enable sub-dissectors",
                           "Whether the data content should be dissected or not")
 
 LOGOPPI.prefs.debug       = Pref.enum("Debug", default_settings.debug_level,
-                                      "The debug printing level", debug_pref_enum)
+                                      "The debug printing level",
+                                      debug_pref_enum)
 
 --------------------------------------------------------------------------------
 -- the function for handling preferences being changed
